@@ -1,0 +1,19 @@
+# Backbone config for the codex agent harness (--method codex).
+#
+# Run with:
+#   python -m src.run --llm-server api \
+#     --llm-config configs/codex_gpt5_mini.yaml \
+#     --judge-config configs/llm_judge_gpt5_mini.yaml \
+#     --subset openend --method codex --episode-ids 30,...
+#
+
+provider: "openai"
+model: "gpt-5-mini"
+
+# Passed to `codex exec -c model_reasoning_effort=...`. "high" matches the Harbor
+# codex parity run, which used codex's default reasoning effort (high).
+reasoning_effort: "high"
+
+# Per-episode wall-clock budget for one codex session (seconds).
+timeout: 1800
+
