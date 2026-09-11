@@ -2,7 +2,7 @@ import json
 import re
 import asyncio
 from pathlib import Path
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from tqdm import tqdm
 
@@ -278,6 +278,7 @@ class MemoryQAInterface:
         task = episode_data.get("task", "")
         trajectory = episode_data.get("trajectory", [])
         qa_pairs = episode_data.get("qa_pairs", [])
+        question_errors = []
 
         if isinstance(self.method, AgentHarnessMethod):
             answer_list = self._answer_episode_with_harness(task, trajectory, qa_pairs)
@@ -285,6 +286,8 @@ class MemoryQAInterface:
                 'episode_id': episode_id,
                 'answer_list': answer_list,
                 'reasoning_trace': "",
+                'status': 'complete',
+                'question_errors': [],
             }
 
         memory = self.memory_construction(trajectory, task)
@@ -311,7 +314,24 @@ class MemoryQAInterface:
 
                 results_dict = {}
                 for future in as_completed(futures):
-                    qa_index, result = future.result()
+                    submitted_index = futures[future]
+                    try:
+                        qa_index, result = future.result()
+                    except Exception as exc:
+                        qa_index = submitted_index
+                        error_message = f"{type(exc).__name__}: {exc}"
+                        print(
+                            f"Warning: episode {episode_id}, question {qa_index + 1} "
+                            f"failed; recording an empty answer and continuing: {error_message}"
+                        )
+                        result = {
+                            'final_answer': '',
+                            'reasoning_trace': f"[QUESTION_ERROR] {error_message}",
+                        }
+                        question_errors.append({
+                            'qa_index': qa_index,
+                            'error': error_message,
+                        })
                     results_dict[qa_index] = result
 
                 # Build answer_list and reasoning_traces in order
@@ -330,9 +350,17 @@ class MemoryQAInterface:
             'episode_id': episode_id,
             'answer_list': answer_list,
             'reasoning_trace': reasoning_trace,
+            'status': 'complete' if not question_errors else 'partial',
+            'question_errors': question_errors,
         }
 
-    def run(self, file_path: str, episodes: Optional[List[Dict[str, Any]]] = None) -> List[Dict[str, Any]]:
+    def run(
+        self,
+        file_path: str,
+        episodes: Optional[List[Dict[str, Any]]] = None,
+        initial_results: Optional[List[Dict[str, Any]]] = None,
+        on_episode_complete: Optional[Callable[[Dict[str, Any]], None]] = None,
+    ) -> List[Dict[str, Any]]:
         """
         Process a single JSONL file containing multiple episodes.
         Each episode contains multiple QA pairs.
@@ -341,6 +369,8 @@ class MemoryQAInterface:
             file_path: Path to JSONL file (e.g., mcq_set.jsonl, open_end_qa_set.jsonl)
             episodes: Optional pre-loaded and pre-filtered list of episodes. If provided,
                       file_path is only used for display purposes and not read again.
+            initial_results: Completed results loaded from a resume checkpoint.
+            on_episode_complete: Callback invoked after each episode finishes or fails.
 
         Returns:
             List of episode results, each containing:
@@ -367,20 +397,45 @@ class MemoryQAInterface:
         print(f"Max concurrency - Episodes: {self.max_concurrency_episodes}, Questions: {self.max_concurrency_questions}")
 
         # Process episodes with parallelism
-        all_results = []
+        all_results = list(initial_results or [])
         with ThreadPoolExecutor(max_workers=self.max_concurrency_episodes) as executor:
             futures = {
-                executor.submit(self.process_episode, episode): episode.get('episode_id', idx)
-                for idx, episode in enumerate(episodes)
+                executor.submit(self.process_episode, episode): episode
+                for episode in episodes
             }
 
             # Use tqdm for progress bar
             with tqdm(total=len(episodes), desc="Processing episodes", unit="episode") as pbar:
                 for future in as_completed(futures):
-                    result = future.result()
+                    episode = futures[future]
+                    episode_id = episode.get('episode_id', 0)
+                    try:
+                        result = future.result()
+                    except Exception as exc:
+                        error_message = f"{type(exc).__name__}: {exc}"
+                        print(
+                            f"Warning: episode {episode_id} failed; recording empty "
+                            f"answers and continuing: {error_message}"
+                        )
+                        result = {
+                            'episode_id': episode_id,
+                            'answer_list': [''] * len(episode.get('qa_pairs', [])),
+                            'reasoning_trace': f"[EPISODE_ERROR] {error_message}",
+                            'status': 'failed',
+                            'question_errors': [{
+                                'qa_index': None,
+                                'error': error_message,
+                            }],
+                        }
                     all_results.append(result)
+                    if on_episode_complete is not None:
+                        on_episode_complete(result)
                     pbar.update(1)
-                    pbar.set_postfix({"Episode": result['episode_id'], "Questions": len(result['answer_list'])})
+                    pbar.set_postfix({
+                        "Episode": result['episode_id'],
+                        "Questions": len(result['answer_list']),
+                        "Status": result.get('status', 'complete'),
+                    })
 
         # Sort results by episode_id to maintain order
         all_results.sort(key=lambda x: x['episode_id'])

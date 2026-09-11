@@ -50,7 +50,21 @@ def evaluate_batch(
 
         with tqdm(total=len(qa_results), desc="Evaluating QA pairs", unit="pair") as pbar:
             for future in as_completed(future_to_result):
-                evaluated_results.append(future.result())
+                original_result = future_to_result[future]
+                try:
+                    evaluated_results.append(future.result())
+                except Exception as exc:
+                    # One unavailable/malformed judge response must not discard
+                    # all successfully judged answers in a long evaluation.
+                    failed_result = dict(original_result)
+                    failed_result['score'] = 0.0
+                    failed_result['judge_error'] = f"{type(exc).__name__}: {exc}"
+                    evaluated_results.append(failed_result)
+                    print(
+                        "Warning: judge failed for episode "
+                        f"{original_result.get('episode_id')}; assigning score 0 "
+                        f"and continuing: {failed_result['judge_error']}"
+                    )
                 pbar.update(1)
 
     return evaluated_results

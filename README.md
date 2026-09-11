@@ -52,6 +52,10 @@ AMA-Bench evaluates whether a method can:
 - Build memory from long agent trajectories
 - Retrieve relevant evidence for a given question
 - Answer open-ended and MCQ questions robustly
+理解Ama-bench的背景和出发点
+1. 已有benchmark过去陈旧，LongMemEval LoCoMo LongMemBench
+2. 已有memory系统的form，retreive存在问题
+
 
 All methods share a unified two-stage interface defined in [src/method/base_method.py](src/method/base_method.py):
 
@@ -69,6 +73,7 @@ Each memory method is implemented in two stages:
 | Construction | `memory_construction` | trajectory text + task | memory object |
 | Retrieval | `memory_retrieve` | memory object + question | context string |
 
+为不同benchmark设计的memory接口
 ---
 
 ## ⚙️ Installation

@@ -3,6 +3,7 @@ import argparse
 import sys
 import re
 import os
+import threading
 from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 import time
@@ -35,6 +36,11 @@ class ModelClient:
             config.get('max_model_len')
             or vllm_launch.get('max_model_len', 131072)
         )
+        self._context_safety_margin = int(config.get('context_safety_margin', 256))
+        self._max_context_truncations = int(config.get('max_context_truncations', 6))
+        self._local_tokenizer = None
+        self._local_tokenizer_initialized = False
+        self._local_tokenizer_lock = threading.Lock()
 
         # For vllm server type, override provider
         if server_type == "vllm":
@@ -46,6 +52,133 @@ class ModelClient:
 
         self._timeout = float(config.get('timeout', 600.0))
         self.client = self._initialize_client()
+
+    def _get_local_tokenizer(self):
+        """Load a tokenizer only when ``model`` points to a local checkpoint.
+
+        Remote/API model names must not trigger an implicit model download.  A
+        local tokenizer lets us enforce the real token budget before sending a
+        request to vLLM instead of relying on a chars-per-token estimate.
+        """
+        if self._local_tokenizer_initialized:
+            return self._local_tokenizer
+
+        with self._local_tokenizer_lock:
+            if self._local_tokenizer_initialized:
+                return self._local_tokenizer
+            if not self.model or not Path(self.model).exists():
+                self._local_tokenizer_initialized = True
+                return None
+            try:
+                from transformers import AutoTokenizer
+
+                self._local_tokenizer = AutoTokenizer.from_pretrained(
+                    self.model,
+                    local_files_only=True,
+                    trust_remote_code=bool(self.config.get('trust_remote_code', False)),
+                )
+            except Exception as exc:
+                print(f"Warning: could not load local tokenizer for context budgeting: {exc}")
+                self._local_tokenizer = None
+            self._local_tokenizer_initialized = True
+            return self._local_tokenizer
+
+    def _prompt_input_budget(self, max_tokens: int) -> int:
+        """Return a conservative input budget for a chat request."""
+        return max(
+            256,
+            int(self._max_model_len) - int(max_tokens) - self._context_safety_margin,
+        )
+
+    def _truncate_prompt_to_budget(
+        self,
+        prompt: str,
+        max_tokens: int,
+        error_str: str = "",
+    ) -> tuple[str, bool, Optional[int]]:
+        """Keep the beginning and end of a prompt within the model budget.
+
+        The question and answer instructions live at the end of AMA-Bench
+        prompts, so head/tail truncation retains them while also preserving the
+        highest-ranked retrieved chunks at the beginning.  Returns the new
+        prompt, whether it changed, and the measured/estimated original token
+        count.
+        """
+        marker = "\n...[truncated to fit model context]...\n"
+        target_tokens = self._prompt_input_budget(max_tokens)
+        tokenizer = self._get_local_tokenizer()
+
+        # vLLM currently reports "request has N input tokens" while some APIs
+        # use "prompt contains at least N input tokens".  The reported count
+        # also covers small differences introduced by a server-side chat
+        # template, which the locally encoded raw prompt cannot see.
+        count_match = re.search(
+            r'(?:request has|prompt contains(?: at least)?)\s+([\d,]+)\s+input tokens',
+            error_str,
+            flags=re.IGNORECASE,
+        )
+        reported_tokens = (
+            int(count_match.group(1).replace(',', ''))
+            if count_match
+            else None
+        )
+
+        if tokenizer is not None:
+            token_ids = tokenizer.encode(prompt, add_special_tokens=False)
+            original_tokens = len(token_ids)
+            if error_str:
+                if reported_tokens and reported_tokens > target_tokens:
+                    # Translate the server-observed excess back into the local
+                    # tokenizer's scale and leave another 10% safety margin.
+                    target_tokens = min(
+                        target_tokens,
+                        max(
+                            256,
+                            int(
+                                original_tokens
+                                * target_tokens
+                                / reported_tokens
+                                * 0.9
+                            ),
+                        ),
+                    )
+                elif original_tokens <= target_tokens:
+                    # The API rejected a prompt that looked valid locally.
+                    # Force monotonic progress instead of retrying unchanged.
+                    target_tokens = max(256, int(original_tokens * 0.8))
+
+            if original_tokens <= target_tokens:
+                return prompt, False, original_tokens
+
+            marker_ids = tokenizer.encode(marker, add_special_tokens=False)
+            content_budget = max(2, target_tokens - len(marker_ids))
+            head_tokens = content_budget // 2
+            tail_tokens = content_budget - head_tokens
+            truncated = (
+                tokenizer.decode(token_ids[:head_tokens], skip_special_tokens=False)
+                + marker
+                + tokenizer.decode(token_ids[-tail_tokens:], skip_special_tokens=False)
+            )
+            return truncated, truncated != prompt, original_tokens
+
+        input_tokens = (
+            reported_tokens
+            if reported_tokens is not None
+            else max(1, len(prompt) // 4)
+        )
+        if input_tokens <= target_tokens and not error_str:
+            return prompt, False, input_tokens
+
+        # Leave an extra 10% margin because character density can vary sharply
+        # between the head/middle/tail of HTML, JSON, and source-code prompts.
+        scale = min(0.9, (target_tokens / max(input_tokens, 1)) * 0.9)
+        marker_len = len(marker)
+        content_chars = max(2, int(len(prompt) * scale) - marker_len)
+        content_chars = min(content_chars, max(2, len(prompt) - marker_len - 1))
+        head_chars = content_chars // 2
+        tail_chars = content_chars - head_chars
+        truncated = prompt[:head_chars] + marker + prompt[-tail_chars:]
+        return truncated, len(truncated) < len(prompt), input_tokens
 
     def _initialize_client(self):
         """Initialize provider-specific client."""
@@ -94,9 +227,23 @@ class ModelClient:
 
     def query(self, prompt: str, temperature: float = 0.0, max_tokens: int = 4096, max_retries: int = 3, system: Optional[str] = None) -> str:
         """Query model with prompt with retry logic for rate limits."""
-        import re as _re
-        _truncated = False
+        context_truncations = 0
         attempt = 0
+
+        # For a local checkpoint, enforce the exact token budget proactively.
+        original_prompt_len = len(prompt)
+        prompt, was_truncated, measured_tokens = self._truncate_prompt_to_budget(
+            prompt,
+            max_tokens,
+        )
+        if was_truncated:
+            context_truncations += 1
+            print(
+                "Context budget exceeded; pre-truncating prompt "
+                f"({measured_tokens} tokens, {original_prompt_len} chars) -> "
+                f"{len(prompt)} chars before request..."
+            )
+
         while attempt < max_retries:
             try:
                 if self.provider in ["custom", "deepseek"]:
@@ -179,31 +326,31 @@ class ModelClient:
                 # Don't retry on refusals or permanent errors
                 if "refused" in error_str.lower() or "refusal" in error_str.lower():
                     raise
-                # Handle context-length 400 errors: reduce max_tokens without consuming an attempt
+                # Context errors shrink the prompt without consuming a normal
+                # transient-error retry attempt.
                 is_context_length_error = (
                     ("400" in error_str or "BadRequestError" in error_str)
                     and ("context length" in error_str.lower() or "context_length" in error_str.lower()
                          or "maximum context" in error_str.lower() or "input_tokens" in error_str.lower())
                 )
                 if is_context_length_error:
-                    if _truncated:
+                    if context_truncations >= self._max_context_truncations:
                         raise
-                    _truncated = True
-                    m_limit = _re.search(r'maximum context length is (\d+)', error_str)
-                    m_input = _re.search(r'prompt contains at least (\d+) input tokens', error_str)
-                    if m_limit and m_input:
-                        model_limit = int(m_limit.group(1))
-                        input_tokens = int(m_input.group(1))
-                    else:
-                        model_limit = self._max_model_len
-                        input_tokens = len(prompt) // 4
-                    target_input_tokens = max(256, model_limit - max_tokens)
-                    scale = target_input_tokens / max(input_tokens, 1)
-                    new_char_len = max(200, min(int(len(prompt) * scale), len(prompt) - 1))
-                    head_len = int(new_char_len * 0.5)
                     old_len = len(prompt)
-                    prompt = prompt[:head_len] + "\n...[truncated]...\n" + prompt[-(new_char_len - head_len):]
-                    print(f"Context length exceeded, truncating prompt {old_len} -> ~{len(prompt)} chars, retrying...")
+                    prompt, changed, measured_tokens = self._truncate_prompt_to_budget(
+                        prompt,
+                        max_tokens,
+                        error_str=error_str,
+                    )
+                    if not changed:
+                        raise
+                    context_truncations += 1
+                    print(
+                        "Context length exceeded; truncating prompt "
+                        f"({measured_tokens} tokens, {old_len} chars) -> "
+                        f"{len(prompt)} chars, retry "
+                        f"{context_truncations}/{self._max_context_truncations}..."
+                    )
                     continue
                 # Don't retry on other 400/client errors (permanent)
                 if "400" in error_str or "BadRequestError" in error_str:
@@ -223,4 +370,3 @@ class ModelClient:
                     time.sleep(wait_time)
 
         raise RuntimeError(f"Failed after {max_retries} retries")
-

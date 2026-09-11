@@ -31,7 +31,7 @@ huggingface_hub>=0.22.0
 #   pip install torch==2.7.1 torchvision==0.22.1 torchaudio==2.7.1 --index-url https://download.pytorch.org/whl/cu128
 #   pip install vllm==0.10.2
 torch==2.7.1
-vllm==0.10.2
+vllm==0.10.1.1
 ray[serve,default]
 starlette>=0.49.1
 transformers>=4.40.0

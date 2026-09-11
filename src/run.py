@@ -1,6 +1,7 @@
 import argparse
 import yaml
 import json
+import os
 import sys
 from pathlib import Path
 from datetime import datetime
@@ -96,6 +97,10 @@ Examples:
     # Output configuration
     parser.add_argument("--output-dir", type=str, default="results",
                         help="Output directory for results. Default: results")
+    parser.add_argument("--resume", action="store_true",
+                        help="Resume generation from the per-episode checkpoint in output-dir")
+    parser.add_argument("--checkpoint-file", type=str, default=None,
+                        help="Optional checkpoint JSONL path. Default: a stable method/model-specific file in output-dir")
 
     args = parser.parse_args()
 
@@ -240,18 +245,95 @@ Examples:
     answers_path = output_dir / f"answers_{base_filename}.jsonl"
     results_path = output_dir / f"results_{base_filename}.json"
 
+    # Materialize the selected episodes so resume can compare IDs before the
+    # interface submits any work.
+    if filtered_episodes is None:
+        target_episodes = []
+        with open(args.test_file, 'r', encoding='utf-8') as f:
+            for line in f:
+                target_episodes.append(json.loads(line.strip()))
+    else:
+        target_episodes = filtered_episodes
+
+    checkpoint_path = (
+        Path(args.checkpoint_file)
+        if args.checkpoint_file
+        else output_dir / f"checkpoint_{model_name}{subset_suffix}{method_suffix}.jsonl"
+    )
+    checkpoint_path.parent.mkdir(parents=True, exist_ok=True)
+
+    expected_questions = {
+        str(ep.get('episode_id')): len(ep.get('qa_pairs', []))
+        for ep in target_episodes
+    }
+    checkpoint_results = {}
+    if args.resume and checkpoint_path.exists():
+        with open(checkpoint_path, 'r', encoding='utf-8') as f:
+            for line_number, line in enumerate(f, 1):
+                if not line.strip():
+                    continue
+                try:
+                    saved = json.loads(line)
+                    checkpoint_results[str(saved.get('episode_id'))] = saved
+                except json.JSONDecodeError as exc:
+                    print(
+                        f"Warning: ignoring malformed checkpoint line "
+                        f"{line_number}: {exc}"
+                    )
+    elif not args.resume:
+        # A non-resume run intentionally starts a fresh checkpoint.
+        with open(checkpoint_path, 'w', encoding='utf-8'):
+            pass
+
+    completed_results = {}
+    for episode_id, saved in checkpoint_results.items():
+        expected = expected_questions.get(episode_id)
+        status = saved.get('status', 'complete')
+        if (
+            expected is not None
+            and status == 'complete'
+            and len(saved.get('answer_list', [])) == expected
+        ):
+            completed_results[episode_id] = saved
+
+    pending_episodes = [
+        ep for ep in target_episodes
+        if str(ep.get('episode_id')) not in completed_results
+    ]
+    if args.resume:
+        print(
+            f"Resume checkpoint: {checkpoint_path} | "
+            f"completed={len(completed_results)}, pending={len(pending_episodes)}"
+        )
+
     # Phase 1: Generate answers
     print("\n" + "="*70)
     print("PHASE 1: GENERATING ANSWERS")
 
-    episode_results = interface.run(file_path=args.test_file, episodes=filtered_episodes)
+    checkpoint_handle = open(checkpoint_path, 'a', encoding='utf-8')
+
+    def checkpoint_episode(result):
+        checkpoint_handle.write(json.dumps(result, ensure_ascii=False) + '\n')
+        checkpoint_handle.flush()
+        os.fsync(checkpoint_handle.fileno())
+
+    try:
+        episode_results = interface.run(
+            file_path=args.test_file,
+            episodes=pending_episodes,
+            initial_results=list(completed_results.values()),
+            on_episode_complete=checkpoint_episode,
+        )
+    finally:
+        checkpoint_handle.close()
 
     # Save answers to JSONL
-    with open(answers_path, 'w') as f:
+    with open(answers_path, 'w', encoding='utf-8') as f:
         for episode in episode_results:
-            f.write(json.dumps(episode) + '\n')
+            f.write(json.dumps(episode, ensure_ascii=False) + '\n')
     print(f"\n✅ Answers saved to: {answers_path}")
     print(f"   Total episodes processed: {len(episode_results)}")
+    print(f"   Resume checkpoint: {checkpoint_path}")
 
     # Phase 2: Evaluate answers (if enabled)
     if not args.evaluate:
