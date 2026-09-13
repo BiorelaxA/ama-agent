@@ -179,46 +179,40 @@ class EmbeddingEngine:
             return self._encode_with_local_model(texts)
 
     def _encode_with_api(self, texts: List[str]) -> np.ndarray:
-        """Encode texts using API-based embedding model (with retry)."""
-        try:
-            from openai import BadRequestError
-        except ImportError:
-            BadRequestError = None
+        """Encode texts using a vLLM-compatible embedding API (with retry).
 
+        ``max_length`` is a token budget.  Passing it to vLLM as
+        ``truncate_prompt_tokens`` lets the server use the model's tokenizer,
+        avoiding the inaccurate character-based truncation previously used
+        here (which was especially problematic for multilingual/code traces).
+        """
         embeddings = []
         max_retries = 3
-        # Use 2 chars/token estimate (conservative for multilingual/code content)
-        # to stay safely below the model's token context limit.
-        # Qwen3 tokenizer encodes typical content at ~1.6 chars/token, so
-        # max_length * 2 gives ~max_length / 1.6 * 2 ≈ 1.25× headroom.
-        _char_limit = self.max_length * 2
 
         for i in range(0, len(texts), self.batch_size):
-            batch = [t[:_char_limit] for t in texts[i:i + self.batch_size]]
+            batch = texts[i:i + self.batch_size]
             last_exc = None
-            current_char_limit = _char_limit
             for attempt in range(max_retries):
                 try:
                     response = self.client.embeddings.create(
                         input=batch,
-                        model=self.model_name
+                        model=self.model_name,
+                        extra_body={
+                            "truncate_prompt_tokens": self.max_length,
+                        },
                     )
                     last_exc = None
                     break
                 except Exception as e:
                     last_exc = e
-                    # 400 means token limit exceeded: truncate harder and retry immediately
-                    if BadRequestError is not None and isinstance(e, BadRequestError):
-                        current_char_limit = current_char_limit // 2
-                        batch = [t[:current_char_limit] for t in texts[i:i + self.batch_size]]
-                    elif attempt < max_retries - 1:
+                    if attempt < max_retries - 1:
                         time.sleep(2 ** attempt)
             if last_exc is not None:
                 raise last_exc
             batch_embeddings = [item.embedding for item in response.data]
             embeddings.extend(batch_embeddings)
 
-        return np.array(embeddings)
+        return np.ascontiguousarray(embeddings, dtype=np.float32)
 
     def _encode_with_local_model(self, texts: List[str]) -> np.ndarray:
         """Encode texts using local HuggingFace model."""

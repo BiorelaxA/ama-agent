@@ -50,6 +50,7 @@ class EmbeddingMethod(BaseMethod):
         embedding_model: str = "sentence-transformers/all-MiniLM-L6-v2",
         top_k: int = 5,
         use_faiss: bool = True,
+        query_instruction: str = "",
         config_path: str = None,
         embedding_engine: Any = None,
     ):
@@ -60,20 +61,30 @@ class EmbeddingMethod(BaseMethod):
             embedding_model: Name of the embedding model
             top_k: Number of top documents to retrieve
             use_faiss: Whether to use FAISS index (requires faiss-cpu package)
+            query_instruction: Retrieval instruction prepended only to queries
             config_path: Path to configuration file (optional)
             embedding_engine: Optional external embedding engine (from utils.embedding)
         """
+        local_max_length = 512
+
         # Load config if provided
         if config_path:
             config = self._load_config(config_path)
             embedding_model = config.get('embedding_model', embedding_model)
             top_k = config.get('top_k', top_k)
             use_faiss = config.get('use_faiss', use_faiss)
+            query_instruction = config.get('query_instruction', query_instruction)
+            embedding_engine_config = config.get('embedding_engine') or {}
+            local_max_length = embedding_engine_config.get(
+                'max_length', local_max_length
+            )
 
         self.embedding_model_name = embedding_model
         self.top_k = top_k
         self.use_faiss = use_faiss and FAISS_AVAILABLE
         self.embedding_engine = embedding_engine
+        self.query_instruction = query_instruction.strip()
+        self.max_length = int(local_max_length)
 
         # Use external embedding engine if provided
         if self.embedding_engine is not None:
@@ -111,7 +122,11 @@ class EmbeddingMethod(BaseMethod):
         for text in texts:
             # Tokenize
             inputs = self.tokenizer(
-                text, padding=True, truncation=True, max_length=512, return_tensors="pt"
+                text,
+                padding=True,
+                truncation=True,
+                max_length=self.max_length,
+                return_tensors="pt",
             )
 
             # Get embeddings
@@ -129,6 +144,12 @@ class EmbeddingMethod(BaseMethod):
             embeddings.append(embedding.cpu().numpy())
 
         return np.vstack(embeddings)
+
+    def _format_query(self, question: str) -> str:
+        """Apply Qwen3-Embedding's query-only retrieval instruction format."""
+        if not self.query_instruction:
+            return question
+        return f"Instruct: {self.query_instruction}\nQuery:{question}"
 
     def memory_construction(self, traj_text: str, task: str = "") -> EmbeddingMemory:
         """
@@ -197,8 +218,9 @@ class EmbeddingMethod(BaseMethod):
         if not isinstance(memory, EmbeddingMemory):
             raise ValueError("Memory must be an EmbeddingMemory object")
 
-        # Encode question
-        question_embedding = self._encode_text([question])
+        # Qwen3-Embedding is instruction-aware: add the retrieval instruction
+        # only on the query side.  Indexed trajectory documents remain raw.
+        question_embedding = self._encode_text([self._format_query(question)])
 
         # Retrieve top-k documents
         if memory.index is not None:

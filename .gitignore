@@ -4,6 +4,7 @@ ama_venv/
 .cursor/
 datasets/
 tmp/
+/models/
 vllm_server.log
 /vllm
 __pycache__/
