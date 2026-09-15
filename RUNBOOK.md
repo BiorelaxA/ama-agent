@@ -23,7 +23,7 @@ mkdir -p logs results
 启动脚本内部使用 `nohup` 将 vLLM 服务放到后台：
 
 ```bash
-VLLM_LOG=logs/qwen3-32b-vllm.log \
+CUDA_VISIBLE_DEVICES=0,1 VLLM_LOG=logs/qwen3-32b-vllm.log \
   bash scripts/launch_vllm_32B.sh configs/qwen3-32B-local.yaml
 ```
 
@@ -355,3 +355,206 @@ ps -fp "$(cat logs/embedding_16k_instruction_full.pid)"
   --output-dir results/embedding_16k_instruction_full \
   --resume
 ```
+
+---
+
+# AMA-Agent（causal=True）
+
+## 14. AMA-Agent 当前复现配置
+
+本节按照当前仓库中 `causal=True` 的 AMA-Agent 实现运行 real-world/open-ended 全量测试。使用：
+
+- Memory 构建、检索判断和回答模型：`/home/share/models/Qwen3-32B`
+- LLM-as-a-Judge：`/home/share/models/Qwen3-32B`
+- Embedding 模型：`qwen3-embedding-4B`
+- `top_k=5`
+- `causal=true`
+- 方法配置：`configs/ama_agent_causal.yaml`
+- 数据集：`data/test/open_end_qa_set.jsonl`（208 episodes、2496 QA pairs）
+
+注意：该命令复现的是当前公开代码中 `causal=True` 的实际行为。当前检索代码没有使用 `memory["causal_graph"]` 做真正的因果边遍历；embedding 失败时还可能静默回退到简化词法检索。因此运行前必须确认 embedding 服务正常。
+
+确认方法配置：
+
+```bash
+sed -n '1,200p' configs/ama_agent_causal.yaml
+```
+
+输出中必须至少包含：
+
+```yaml
+top_k: 5
+causal: true
+```
+
+## 15. 启动 AMA-Agent 所需的两个模型服务
+
+进入项目和环境：
+
+```bash
+cd /home/hongyshen/AMA-Hub
+conda activate ama_env
+mkdir -p logs results
+```
+
+在 GPU 0、1 上启动 Qwen3-32B。脚本会使用 `nohup` 放到后台：
+
+```bash
+CUDA_VISIBLE_DEVICES=0,1 VLLM_LOG=logs/qwen3-32b-vllm.log \
+  bash scripts/launch_vllm_32B.sh configs/qwen3-32B-local.yaml
+```
+
+在 GPU 2 上启动 Qwen3-Embedding-4B：
+
+```bash
+CUDA_VISIBLE_DEVICES=2 \
+nohup python -m vllm.entrypoints.openai.api_server \
+  --model /home/hongyshen/AMA-Hub/models/Qwen3-Embedding-4B \
+  --served-model-name qwen3-embedding-4B \
+  --runner pooling \
+  --host localhost \
+  --port 8003 \
+  --max-model-len 16384 \
+  --gpu-memory-utilization 0.8 \
+  --no-enable-prefix-caching \
+  --no-enable-chunked-prefill \
+  > logs/qwen3-embedding-4b-ama-agent.log 2>&1 &
+
+echo $! > logs/qwen3-embedding-4b-ama-agent.pid
+```
+
+查看两个服务的日志：
+
+```bash
+tail -f logs/qwen3-32b-vllm.log
+```
+
+```bash
+tail -f logs/qwen3-embedding-4b-ama-agent.log
+```
+
+确认两个服务均已启动：
+
+```bash
+curl --noproxy localhost,127.0.0.1 -i http://localhost:8056/health
+curl --noproxy localhost,127.0.0.1 http://localhost:8056/v1/models
+
+curl --noproxy localhost,127.0.0.1 -i http://localhost:8003/health
+curl --noproxy localhost,127.0.0.1 http://localhost:8003/v1/models
+```
+
+Embedding 服务返回的模型 ID 必须与 `configs/ama_agent_causal.yaml` 中的 `model_name: qwen3-embedding-4B` 完全一致。发送一次真实 embedding 请求：
+
+```bash
+curl --noproxy localhost,127.0.0.1 http://localhost:8003/v1/embeddings \
+  -H 'Content-Type: application/json' \
+  -d '{
+    "model": "qwen3-embedding-4B",
+    "input": ["What happened in the trajectory?"],
+    "truncate_prompt_tokens": 16384
+  }'
+```
+
+## 16. AMA-Agent smoke test
+
+先运行两个 episode。使用独立输出目录，不能从其他 AMA-Agent 配置产生的 checkpoint 续跑：
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method ama_agent \
+  --method-config configs/ama_agent_causal.yaml \
+  --test-dir data/test \
+  --episode-ids 0,1 \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 2 \
+  --judge-max-concurrency 4 \
+  --output-dir results/ama_agent_causal_smoke
+```
+
+确认日志中没有 `Status=failed`、`Status=partial`、连接错误或空答案后，再执行全量实验。
+
+## 17. 首次运行完整 AMA-Agent 实验
+
+首次运行不要添加 `--resume`：
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method ama_agent \
+  --method-config configs/ama_agent_causal.yaml \
+  --test-dir data/test \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 4 \
+  --judge-max-concurrency 8 \
+  --output-dir results/ama_agent_causal_full
+```
+
+如果显存和服务稳定，可以把 `--max-concurrency-episodes` 从 `1` 提高到 `2`。并发数只影响吞吐和显存压力，不改变 `top_k` 或 `causal` 配置。
+
+## 18. AMA-Agent 中断后续跑
+
+只能对第17节同一配置和同一输出目录产生的 checkpoint 使用 `--resume`：
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method ama_agent \
+  --method-config configs/ama_agent_causal.yaml \
+  --test-dir data/test \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 4 \
+  --judge-max-concurrency 8 \
+  --output-dir results/ama_agent_causal_full \
+  --resume
+```
+
+续跑会跳过 `status=complete` 且答案数量完整的 episode，并重新运行 `partial` 或 `failed` 的 episode。
+
+## 19. 将完整 AMA-Agent 实验放到后台
+
+两个模型服务通过 health check 后，首次后台运行使用：
+
+```bash
+nohup bash -lc '
+cd /home/hongyshen/AMA-Hub
+source /home/hongyshen/miniconda3/etc/profile.d/conda.sh
+conda activate ama_env
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method ama_agent \
+  --method-config configs/ama_agent_causal.yaml \
+  --test-dir data/test \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 4 \
+  --judge-max-concurrency 8 \
+  --output-dir results/ama_agent_causal_full
+' > logs/ama_agent_causal_full.log 2>&1 &
+
+echo $! > logs/ama_agent_causal_full.pid
+```
+
+查看后台运行状态：
+
+```bash
+tail -f logs/ama_agent_causal_full.log
+ps -fp "$(cat logs/ama_agent_causal_full.pid)"
+```
+
+后台任务中断后，在 Python 命令末尾增加 `--resume`，其他参数和输出目录保持不变。
