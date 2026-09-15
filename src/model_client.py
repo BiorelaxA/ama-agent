@@ -225,7 +225,16 @@ class ModelClient:
         else:
             raise ValueError(f"Unsupported provider: {self.provider}")
 
-    def query(self, prompt: str, temperature: float = 0.0, max_tokens: int = 4096, max_retries: int = 3, system: Optional[str] = None) -> str:
+    def query(
+        self,
+        prompt: str,
+        temperature: float = 0.0,
+        max_tokens: int = 4096,
+        max_retries: int = 3,
+        system: Optional[str] = None,
+        top_p: Optional[float] = None,
+        enable_thinking: Optional[bool] = None,
+    ) -> str:
         """Query model with prompt with retry logic for rate limits."""
         context_truncations = 0
         attempt = 0
@@ -247,12 +256,21 @@ class ModelClient:
         while attempt < max_retries:
             try:
                 if self.provider in ["custom", "deepseek"]:
-                    response = self.client.chat.completions.create(
+                    request_params = dict(
                         model=self.model,
                         messages=[{"role": "user", "content": prompt}],
                         temperature=temperature,
                         max_tokens=max_tokens,
                     )
+                    if top_p is not None:
+                        request_params["top_p"] = top_p
+                    if enable_thinking is not None and self.provider == "custom":
+                        request_params["extra_body"] = {
+                            "chat_template_kwargs": {
+                                "enable_thinking": enable_thinking,
+                            }
+                        }
+                    response = self.client.chat.completions.create(**request_params)
                     return response.choices[0].message.content.strip()
 
                 elif self.provider == "openai":

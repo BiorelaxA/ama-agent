@@ -19,6 +19,7 @@ _LAZY_REGISTRY: Dict[str, tuple[str, str]] = {
     "embedding": ("src.method.embedding_mem", "EmbeddingMethod"),
     "longcontext": ("src.method.longcontext", "LongContextMethod"),
     "ama_agent": ("src.method.ama_agent", "AMAAgentMethod"),
+    "memagent": ("src.method.memagent", "MemAgentMethod"),
     "codex": ("src.method.agent_method", "CodexAgentMethod"),
     "claude_code": ("src.method.agent_method", "ClaudeCodeAgentMethod"),
 }

@@ -558,3 +558,136 @@ ps -fp "$(cat logs/ama_agent_causal_full.pid)"
 ```
 
 后台任务中断后，在 Python 命令末尾增加 `--resume`，其他参数和输出目录保持不变。
+
+---
+
+# MemAgent（固定 episode-level memory）
+
+## 20. MemAgent 接入配置
+
+AMA-Hub 中注册的方法名为 `memagent`，配置文件为：
+
+```text
+configs/method_configs/memagent.yaml
+```
+
+当前配置：
+
+```yaml
+model: "Qwen3-32B"
+chunk_size: 5000
+memory_max_tokens: 1024
+final_answer_max_tokens: 1024
+temperature: 0.7
+top_p: 0.95
+enable_thinking: true
+strip_thinking_from_memory: true
+trajectory_max_tokens: null
+construction_problem: "episode_task"
+build_once_per_episode: true
+```
+
+实现遵循 AMA-Bench 的固定-memory协议：每个 episode 的完整轨迹只构建一次 memory，随后12个QA共享该 memory。构建时使用 episode 的 `task` 填充上游 MemAgent prompt 的 `<problem>`；轨迹使用 Qwen3-32B tokenizer 精确切成5000-token块。每轮只将去除 thinking 后的可见 memory 传给下一轮。
+
+该适配器复用了 `methods/memory_agent/MemAgent` 中的 recurrent update 和 final-answer prompt，不需要安装上游训练框架的 Ray、verl，也不需要启动 Qwen3-Embedding-4B。
+
+## 21. 启动并检查 Qwen3-32B
+
+```bash
+cd /home/hongyshen/AMA-Hub
+conda activate ama_env
+mkdir -p logs results
+
+CUDA_VISIBLE_DEVICES=0,1 VLLM_LOG=logs/qwen3-32b-vllm.log \
+  bash scripts/launch_vllm_32B.sh configs/qwen3-32B-local.yaml
+```
+
+检查服务：
+
+```bash
+curl --noproxy localhost,127.0.0.1 -i http://localhost:8056/health
+curl --noproxy localhost,127.0.0.1 http://localhost:8056/v1/models
+```
+
+MemAgent 的 memory 更新和最终回答请求会显式向 vLLM 传入：
+
+```text
+temperature=0.7
+top_p=0.95
+max_tokens=1024
+chat_template_kwargs.enable_thinking=true
+```
+
+Judge 仍由同一 Qwen3-32B 服务执行。
+
+## 22. MemAgent smoke test
+
+先运行两个 episode：
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method memagent \
+  --method-config configs/method_configs/memagent.yaml \
+  --test-dir data/test \
+  --episode-ids 0,1 \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 2 \
+  --judge-max-concurrency 4 \
+  --output-dir results/memagent_smoke
+```
+
+日志中每个 episode 应只出现一次类似下面的 memory 构建记录：
+
+```text
+MemAgent construction: trajectory_tokens=..., chunks=..., chunk_size=5000
+```
+
+确认没有 `Status=failed`、`Status=partial` 或 `MemAgent produced empty memory` 后再执行全量测试。
+
+## 23. 首次运行完整 MemAgent 实验
+
+首次运行不要添加 `--resume`：
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method memagent \
+  --method-config configs/method_configs/memagent.yaml \
+  --test-dir data/test \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 4 \
+  --judge-max-concurrency 8 \
+  --output-dir results/memagent_full
+```
+
+服务稳定后可以将 `--max-concurrency-episodes` 提高到 `2`。由于一个 episode 内部的 recurrent memory 更新有前后依赖，同一 episode 的5000-token chunks始终按顺序处理；只有不同 episode 和最终 QA 可以并发。
+
+## 24. MemAgent 中断后续跑
+
+```bash
+/usr/bin/time -p python src/run.py \
+  --llm-server vllm \
+  --llm-config configs/qwen3-32B-local.yaml \
+  --judge-server vllm \
+  --judge-config configs/qwen3-32B-local.yaml \
+  --subset openend \
+  --method memagent \
+  --method-config configs/method_configs/memagent.yaml \
+  --test-dir data/test \
+  --max-concurrency-episodes 1 \
+  --max-concurrency-questions-per-episode 4 \
+  --judge-max-concurrency 8 \
+  --output-dir results/memagent_full \
+  --resume
+```
+
+不要使用其他方法或其他 MemAgent 配置生成的 checkpoint 续跑。配置发生变化时应更换新的 `--output-dir`。
