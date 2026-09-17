@@ -1,0 +1,46 @@
+slurmstepd-gpu18: error: Unable to create TMPDIR [/tmp/hongyshen/tmp]: No such file or directory
+slurmstepd-gpu18: error: Setting TMPDIR to /tmp
+Failed to launch Qwen3-32B. Last vLLM log lines:
+INFO 09-16 01:21:08 [__init__.py:241] Automatically detected platform cuda.
+[1;36m(APIServer pid=28227)[0;0m INFO 09-16 01:21:26 [api_server.py:1805] vLLM API server version 0.10.1.1
+[1;36m(APIServer pid=28227)[0;0m INFO 09-16 01:21:26 [utils.py:326] non-default args: {'host': 'localhost', 'port': 8056, 'model': '/home/share/models/Qwen3-32B', 'max_model_len': 32000, 'tensor_parallel_size': 2, 'gpu_memory_utilization': 0.95}
+[1;36m(APIServer pid=28227)[0;0m INFO 09-16 01:21:46 [__init__.py:711] Resolved architecture: Qwen3ForCausalLM
+[1;36m(APIServer pid=28227)[0;0m INFO 09-16 01:21:46 [__init__.py:1750] Using max model len 32000
+[1;36m(APIServer pid=28227)[0;0m INFO 09-16 01:21:51 [scheduler.py:222] Chunked prefill is enabled with max_num_batched_tokens=2048.
+INFO 09-16 01:21:58 [__init__.py:241] Automatically detected platform cuda.
+[1;36m(EngineCore_0 pid=29373)[0;0m INFO 09-16 01:22:00 [core.py:636] Waiting for init message from front-end.
+[1;36m(EngineCore_0 pid=29373)[0;0m INFO 09-16 01:22:00 [core.py:74] Initializing a V1 LLM engine (v0.10.1.1) with config: model='/home/share/models/Qwen3-32B', speculative_config=None, tokenizer='/home/share/models/Qwen3-32B', skip_tokenizer_init=False, tokenizer_mode=auto, revision=None, override_neuron_config={}, tokenizer_revision=None, trust_remote_code=False, dtype=torch.bfloat16, max_seq_len=32000, download_dir=None, load_format=auto, tensor_parallel_size=2, pipeline_parallel_size=1, disable_custom_all_reduce=False, quantization=None, enforce_eager=False, kv_cache_dtype=auto, device_config=cuda, decoding_config=DecodingConfig(backend='auto', disable_fallback=False, disable_any_whitespace=False, disable_additional_properties=False, reasoning_backend=''), observability_config=ObservabilityConfig(show_hidden_metrics_for_version=None, otlp_traces_endpoint=None, collect_detailed_traces=None), seed=0, served_model_name=/home/share/models/Qwen3-32B, enable_prefix_caching=True, chunked_prefill_enabled=True, use_async_output_proc=True, pooler_config=None, compilation_config={"level":3,"debug_dump_path":"","cache_dir":"","backend":"","custom_ops":[],"splitting_ops":["vllm.unified_attention","vllm.unified_attention_with_output","vllm.mamba_mixer2"],"use_inductor":true,"compile_sizes":[],"inductor_compile_config":{"enable_auto_functionalized_v2":false},"inductor_passes":{},"cudagraph_mode":1,"use_cudagraph":true,"cudagraph_num_of_warmups":1,"cudagraph_capture_sizes":[512,504,496,488,480,472,464,456,448,440,432,424,416,408,400,392,384,376,368,360,352,344,336,328,320,312,304,296,288,280,272,264,256,248,240,232,224,216,208,200,192,184,176,168,160,152,144,136,128,120,112,104,96,88,80,72,64,56,48,40,32,24,16,8,4,2,1],"cudagraph_copy_inputs":false,"full_cuda_graph":false,"pass_config":{},"max_capture_size":512,"local_cache_dir":null}
+[1;36m(EngineCore_0 pid=29373)[0;0m WARNING 09-16 01:22:00 [multiproc_worker_utils.py:273] Reducing Torch parallelism from 16 threads to 1 to avoid unnecessary CPU contention. Set OMP_NUM_THREADS in the external environment to tune this value as needed.
+[1;36m(EngineCore_0 pid=29373)[0;0m INFO 09-16 01:22:00 [shm_broadcast.py:289] vLLM message queue communication handle: Handle(local_reader_ranks=[0, 1], buffer_handle=(2, 16777216, 10, 'psm_33575c0d'), local_subscribe_addr='ipc:///tmp/57396f01-8ed1-48dc-abbf-131cc1d776cb', remote_subscribe_addr=None, remote_addr_ipv6=False)
+INFO 09-16 01:22:05 [__init__.py:241] Automatically detected platform cuda.
+INFO 09-16 01:22:05 [__init__.py:241] Automatically detected platform cuda.
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:15 [shm_broadcast.py:289] vLLM message queue communication handle: Handle(local_reader_ranks=[0], buffer_handle=(1, 10485760, 10, 'psm_26a3c168'), local_subscribe_addr='ipc:///tmp/1f62e792-f9f2-4419-945a-c88bd55d478d', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:15 [shm_broadcast.py:289] vLLM message queue communication handle: Handle(local_reader_ranks=[0], buffer_handle=(1, 10485760, 10, 'psm_e74615d5'), local_subscribe_addr='ipc:///tmp/edb02b28-1e8e-409d-9554-34f7f61d7224', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:16 [__init__.py:1418] Found nccl from library libnccl.so.2
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:16 [pynccl.py:70] vLLM is using nccl==2.26.2
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [__init__.py:1418] Found nccl from library libnccl.so.2
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [pynccl.py:70] vLLM is using nccl==2.26.2
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [custom_all_reduce.py:35] Skipping P2P check and trusting the driver's P2P report.
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:16 [custom_all_reduce.py:35] Skipping P2P check and trusting the driver's P2P report.
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [shm_broadcast.py:289] vLLM message queue communication handle: Handle(local_reader_ranks=[1], buffer_handle=(1, 4194304, 6, 'psm_a61a86ed'), local_subscribe_addr='ipc:///tmp/66a85625-0911-4be5-bf10-5f4aab558c45', remote_subscribe_addr=None, remote_addr_ipv6=False)
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:16 [parallel_state.py:1134] rank 1 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 1, EP rank 1
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [parallel_state.py:1134] rank 0 in world size 2 is assigned as DP rank 0, PP rank 0, TP rank 0, EP rank 0
+[1;36m(VllmWorker TP0 pid=29486)[0;0m WARNING 09-16 01:22:16 [topk_topp_sampler.py:61] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+[1;36m(VllmWorker TP1 pid=29487)[0;0m WARNING 09-16 01:22:16 [topk_topp_sampler.py:61] FlashInfer is not available. Falling back to the PyTorch-native implementation of top-p & top-k sampling. For the best performance, please install FlashInfer.
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:16 [gpu_model_runner.py:1953] Starting to load model /home/share/models/Qwen3-32B...
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:16 [gpu_model_runner.py:1953] Starting to load model /home/share/models/Qwen3-32B...
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:17 [gpu_model_runner.py:1985] Loading model from scratch...
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:17 [gpu_model_runner.py:1985] Loading model from scratch...
+[1;36m(VllmWorker TP0 pid=29486)[0;0m INFO 09-16 01:22:17 [cuda.py:328] Using Flash Attention backend on V1 engine.
+[1;36m(VllmWorker TP1 pid=29487)[0;0m INFO 09-16 01:22:17 [cuda.py:328] Using Flash Attention backend on V1 engine.
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:   0% Completed | 0/17 [00:00<?, ?it/s]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:   6% Completed | 1/17 [00:07<02:05,  7.87s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  12% Completed | 2/17 [00:15<01:55,  7.67s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  18% Completed | 3/17 [00:21<01:38,  7.07s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  24% Completed | 4/17 [00:29<01:36,  7.43s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  29% Completed | 5/17 [00:36<01:27,  7.27s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  35% Completed | 6/17 [00:44<01:20,  7.32s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  41% Completed | 7/17 [00:50<01:11,  7.15s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  47% Completed | 8/17 [00:58<01:05,  7.29s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  53% Completed | 9/17 [01:05<00:56,  7.11s/it]
+[1;36m(VllmWorker TP0 pid=29486)[0;0m Loading safetensors checkpoint shards:  59% Completed | 10/17 [01:12<00:50,  7.21s/it]

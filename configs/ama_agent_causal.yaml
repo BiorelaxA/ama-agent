@@ -1,0 +1,26 @@
+# AMA-Agent causal-mode reproduction attempt.
+# Paper-explicit settings: Qwen3-Embedding-4B and top_k=5.
+# Other method parameters follow the released configs/ama_agent.yaml defaults.
+
+retrieval_mode: "embed"
+temperature: 0
+chunk_size: 2048
+session_size: 8192
+top_k: 5
+enable_tools: true
+causal: true
+
+# The answer/construction model is supplied by --llm-config.
+embedding_engine:
+  # Must match the --served-model-name exposed by the running vLLM server.
+  model_name: "qwen3-embedding-4B"
+  base_url: "http://127.0.0.1:8003/v1"
+  host: "127.0.0.1"
+  port: 8003
+  api_key: "EMPTY"
+  batch_size: 8
+  max_length: 16384
+
+  # The embedding server is managed separately for reproducible GPU placement.
+  auto_launch: false
+  runner: "pooling"

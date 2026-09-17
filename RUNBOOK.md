@@ -409,7 +409,7 @@ CUDA_VISIBLE_DEVICES=0,1 VLLM_LOG=logs/qwen3-32b-vllm.log \
 ```bash
 CUDA_VISIBLE_DEVICES=2 \
 nohup python -m vllm.entrypoints.openai.api_server \
-  --model /home/hongyshen/AMA-Hub/models/Qwen3-Embedding-4B \
+  --model /home/ma-user/work/ama-agent/models/qwen3-embedding-4b \
   --served-model-name qwen3-embedding-4B \
   --runner pooling \
   --host localhost \
@@ -492,9 +492,9 @@ curl --noproxy localhost,127.0.0.1 http://localhost:8003/v1/embeddings \
   --method ama_agent \
   --method-config configs/ama_agent_causal.yaml \
   --test-dir data/test \
-  --max-concurrency-episodes 1 \
+  --max-concurrency-episodes 3 \
   --max-concurrency-questions-per-episode 4 \
-  --judge-max-concurrency 8 \
+  --judge-max-concurrency 12 \
   --output-dir results/ama_agent_causal_full
 ```
 
@@ -576,11 +576,11 @@ configs/method_configs/memagent.yaml
 ```yaml
 model: "Qwen3-32B"
 chunk_size: 5000
-memory_max_tokens: 1024
-final_answer_max_tokens: 1024
+memory_max_tokens: 8192
+final_answer_max_tokens: 8192
 temperature: 0.7
 top_p: 0.95
-enable_thinking: true
+enable_thinking: false
 strip_thinking_from_memory: true
 trajectory_max_tokens: null
 construction_problem: "episode_task"
@@ -663,7 +663,11 @@ MemAgent construction: trajectory_tokens=..., chunks=..., chunk_size=5000
   --method memagent \
   --method-config configs/method_configs/memagent.yaml \
   --test-dir data/test \
-  --max-concurrency-episodes 1 \
+<<<<<<< HEAD
+  --max-concurrency-episodes 2 \
+=======
+  --max-concurrency-episodes 3 \
+>>>>>>> b90d94f (修改runbook.md)
   --max-concurrency-questions-per-episode 4 \
   --judge-max-concurrency 8 \
   --output-dir results/memagent_full
