@@ -4,7 +4,7 @@ chunk_size: 5000
 memory_max_tokens: 8192
 # Leaves 23,552 input tokens in the 32K context after the 256-token safety
 # margin, so the complete 8K memory fits alongside the question and template.
-final_answer_max_tokens: 16384
+final_answer_max_tokens: 14336
 temperature: 0.7
 top_p: 0.95
 enable_thinking: false
