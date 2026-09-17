@@ -1,9 +1,0 @@
-provider: "custom"
-
-# TODO: replace with your own endpoint
-base_url: "http://xxxx.com/v1"
-api_key: "sk-xxxxx"
-model: "Qwen/Qwen3-32B"
-
-max_tokens: 16000
-temperature: 0.0
