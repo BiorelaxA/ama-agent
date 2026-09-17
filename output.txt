@@ -1,0 +1,36 @@
+现在ama-agent复现结果出来，位于./results，但是我有个问题。复现的结果是Type A:
+
+```
+  Accuracy: 0.5888 (839 questions)
+Type B:
+  Accuracy: 0.6342 (596 questions)
+Type C:
+  Accuracy: 0.4884 (647 questions)
+Type D:
+  Accuracy: 0.4227 (414 questions)。这里设置的是检索top-k=5。但是在代码中他的
+```
+
+ama-agent的实现和他在论文中的内容./Ama-Bench.pdf不同，这里的问题是代码中在构建
+memory时从chunk2开始后续chunk拿到前一个chunk的因果关系在prompt中格式不固定（或者
+说没有任何说明）也就是prompt没有说明前一个chunk的因果关系该以什么形式给如下一个
+chunk去构建memory。除此之外，还有一个我最疑惑的点，memory的检索首先是语义检索，但
+是代码中的embedding编码和论文中编码的对象不同，代码中编码对象是直接编码turns，而
+论文中则是编码因果节点，这里代码我没有做修改，也就是说语义检索的对象依然是turns，
+然后让模型基于top-5的结果然后判断还是否需要其他turns内容，如果需要则提出（但是因
+为编码的内容是turns而不是因果节点，所以这里模型继续提出的其他turns我认为是不能作
+为因果关系导出的）但是问题在于现在的这个结果本质上和top-5的纯embedding没有什么区
+别，因为前面构建的因果图没有用上，唯一的区别在于这里的top-5可能没有作用，因为如果
+模型认为top-5不够，会继续查看其他turns重复3轮。这是事实上比top-5会多看到几个
+turn。我也复现了论文中的embedding-4B rag结果，分数如下：Qwen3-Emb-4B 5
+huggingface 0.4338 0.4765  0.3632  0.2899   0.4018
+Qwen3-Emb-4B_16K-instruction 5 ~ 0.4422(0.3137) 0.4748(0.3016) 0.4111(0.3108)
+0.3188(0.2927) 0.4215(0.3066)
+Qwen3-Emb-4B 10 ~ 0.5185 0.5621 0.4621 0.3551 0.4872。可以看第一行是原始代码配
+置，后续我增加了instruction并扩大embedding输入上限到16K，第三行是在第一行基础上将
+top-k从5修改到10.但是我观察到，ama-agent这次分数结果比embedding中的任意一个都高。
+我感觉是因为前面提到ama-agent虽然也是语义搜素和因果图没什么关系，但是他有3轮机
+会，导致top-k更大是这个原因吗。还是说有其他原因，还是说我前面对ama-agent代码理解
+不对。论文内容你可以查看本地项目下的Ama-Bench.pdf文档
+
+
+
